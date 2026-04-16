@@ -244,6 +244,42 @@ func TestAttrLiteralRoundTrip(t *testing.T) {
 	}
 }
 
+func TestDecodeUTF16LE(t *testing.T) {
+	// Build a UTF-16LE byte stream with BOM and an XML declaration.
+	xmlText := `<?xml version="1.0" encoding="UTF-16"?>
+<greeting lang="fr">café ¥</greeting>`
+	// Hand-encode to UTF-16LE with BOM so the test has no external deps.
+	utf16le := []byte{0xFF, 0xFE}
+	for _, r := range xmlText {
+		utf16le = append(utf16le, byte(r), byte(r>>8))
+	}
+	md, err := Decode(utf16le)
+	if err != nil {
+		t.Fatalf("Decode UTF-16LE: %v", err)
+	}
+	if !md.EncodingInfo.HasBom || md.EncodingInfo.BomType != pb.XmlBomType_XML_BOM_UTF_16_LE {
+		t.Errorf("BOM detection wrong: %+v", md.EncodingInfo)
+	}
+	if md.Document.CharacterEncodingScheme != "UTF-16" {
+		t.Errorf("declared encoding preserved = %q, want UTF-16", md.Document.CharacterEncodingScheme)
+	}
+	root := md.Document.DocumentElement
+	if root == nil || root.LocalName != "greeting" {
+		t.Fatalf("root = %+v", root)
+	}
+	if txt := root.Children[0].GetText(); txt == nil || txt.Data != "café ¥" {
+		t.Errorf("text = %+v, want %q", txt, "café ¥")
+	}
+	// Raw-bytes round-trip must be byte-identical.
+	out, err := EncodeMetadata(md, EncodeOptions{UseRawBytes: true})
+	if err != nil {
+		t.Fatalf("EncodeMetadata: %v", err)
+	}
+	if string(out) != string(utf16le) {
+		t.Errorf("raw round-trip differs from source")
+	}
+}
+
 func TestDecodeBOM(t *testing.T) {
 	src := append([]byte{0xEF, 0xBB, 0xBF}, []byte(`<r/>`)...)
 	md, err := Decode(src)

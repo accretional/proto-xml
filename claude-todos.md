@@ -20,17 +20,15 @@ chromerpc server driving headless Chrome against the `_html/` demo pages
 (commit `c90eab3`). `cmd/demo-screenshots` still falls back to placeholder
 PNGs when `CHROMERPC_ADDR` is unreachable.
 
-## 3. Charset transcoding — **todo**
+## 3. Charset transcoding — **done**
 
-**Problem.** `CharsetReader` is a no-op. A document declared as UTF-16 or
-`windows-1252` but actually not UTF-8 will parse to garbage (or error) silently.
-
-**Plan.**
-- Add `golang.org/x/net/html/charset` as a dep (tiny; already implied by
-  most Go XML stacks).
-- Wire `dec.CharsetReader = charset.NewReaderLabel`.
-- Add a fixture written in UTF-16LE with a BOM; extend validation to cover it.
-- Document in `testing/README.md` which encodings are reachable.
+Non-UTF-8 inputs (UTF-16 with BOM, windows-1252, etc.) are transcoded to
+UTF-8 upfront via `golang.org/x/net/html/charset` (`transcodeToUTF8` in
+`internal/xmlcodec/decode.go`). Byte-offset scanning runs on the
+transcoded buffer; `RawBytes` still holds the original. Declared encoding
+survives on `doc.CharacterEncodingScheme`; BOM + actual-encoding survive
+on `EncodingInfo`. Fixture: `data/handwritten/17_utf16le_bom.xml`. Unit
+test: `TestDecodeUTF16LE`.
 
 ## 4. DOCTYPE internal subset — **todo (larger)**
 
@@ -69,6 +67,6 @@ Investigate whether a node-allocation arena helps before committing.
 
 ---
 
-**Working order.** Items 1 and 2 complete. Next up: 3 (charset
-transcoding); 4 pulled in if the user asks. Everything below 4 stays
-queued until there's concrete demand.
+**Working order.** Items 1, 2, and 3 complete. Item 4 (DOCTYPE internal
+subset) pulled in if the user asks. Everything below 4 stays queued
+until there's concrete demand.

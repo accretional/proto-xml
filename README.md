@@ -73,9 +73,11 @@ list as new ones turn up.
 
 - No streaming Decode/Encode — the whole document is held in memory.
   Acceptable for typical XML payloads, problematic for multi-MB feeds.
-- `CharsetReader` is a no-op: non-UTF-8 inputs (UTF-16, Latin-1) will
-  parse only by accident. Wiring `golang.org/x/net/html/charset` would
-  fix this without leaving the stdlib decoder.
+- Non-UTF-8 inputs (UTF-16 with BOM, windows-1252, etc.) are transcoded
+  to UTF-8 upfront via `golang.org/x/net/html/charset` so byte-offset
+  scanning (CDATA, attribute literals, text pieces) works on a single
+  buffer. Original bytes survive in `RawBytes`. Structural encode always
+  emits UTF-8 regardless of source encoding.
 - Self-closing detection (`isSelfClosingTag`) is a regex scan over the
   full source per element. O(n·m). Fine for fixtures, replace with offset
   capture during decode for production use.

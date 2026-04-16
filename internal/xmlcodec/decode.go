@@ -9,6 +9,8 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"golang.org/x/net/html/charset"
+
 	pb "openformat/gen/go/openformat/v1"
 )
 
@@ -18,31 +20,45 @@ func Decode(src []byte) (*pb.XmlDocumentWithMetadata, error) {
 	raw := append([]byte(nil), src...)
 
 	enc := detectEncoding(src)
-	cdataRanges := scanCDATARanges(src)
 
-	// encoding/xml only supports XML 1.0. Patch the version in the declaration
-	// so that 1.1 documents decode structurally; the true declared version is
-	// still applied to the proto via applyXMLDeclaration below.
-	parsed := patchXMLVersion(src)
-
-	dec := xml.NewDecoder(bytes.NewReader(parsed))
-	dec.Strict = true
-	dec.CharsetReader = func(_ string, input io.Reader) (io.Reader, error) {
-		// Treat non-utf-8 encodings transparently: we rely on the byte stream
-		// being utf-8 (the most common case). A full charset transcoder is
-		// out of scope for this codec — documented in testing/README.md.
-		return input, nil
+	// Pre-transcode non-UTF-8 input (UTF-16 with BOM, windows-1252, etc.) so
+	// all downstream byte-offset scanning (CDATA ranges, attribute-literal
+	// extraction, text-piece reconstruction) runs on one consistent buffer.
+	// raw_bytes still points to the original so UseRawBytes round-trips.
+	transcoded, err := transcodeToUTF8(src, enc)
+	if err != nil {
+		doc := &pb.XmlDocument{WellFormed: false}
+		return wrapDecoded(doc, enc, raw), fmt.Errorf("xml decode: %w", err)
 	}
 
 	doc := &pb.XmlDocument{
 		WellFormed: true,
 	}
-	// Apply declared version/encoding/standalone from the ORIGINAL bytes so
-	// that version="1.1" is recorded faithfully even though stdlib sees 1.0.
-	if idx := bytes.Index(src, []byte("<?xml")); idx >= 0 {
-		if end := bytes.Index(src[idx:], []byte("?>")); end > 0 {
-			applyXMLDeclaration(doc, string(src[idx+len("<?xml"):idx+end]))
+	// Read the declaration from the transcoded-but-not-yet-rewritten buffer
+	// so the original declared encoding lands on doc.CharacterEncodingScheme.
+	if idx := bytes.Index(transcoded, []byte("<?xml")); idx >= 0 {
+		if end := bytes.Index(transcoded[idx:], []byte("?>")); end > 0 {
+			applyXMLDeclaration(doc, string(transcoded[idx+len("<?xml"):idx+end]))
 		}
+	}
+
+	// Now rewrite the declaration to encoding="UTF-8" (if it differed) so
+	// stdlib's xml decoder accepts the byte stream without calling
+	// CharsetReader for mismatches.
+	parsed := rewriteDeclaredEncoding(transcoded, "UTF-8")
+
+	cdataRanges := scanCDATARanges(parsed)
+
+	// encoding/xml only supports XML 1.0. Patch the version in the declaration
+	// so that 1.1 documents decode structurally; the true declared version is
+	// still applied to the proto via applyXMLDeclaration above.
+	parsed = patchXMLVersion(parsed)
+
+	dec := xml.NewDecoder(bytes.NewReader(parsed))
+	dec.Strict = true
+	dec.CharsetReader = func(_ string, input io.Reader) (io.Reader, error) {
+		// transcodeToUTF8 already converted the byte stream; return as-is.
+		return input, nil
 	}
 
 	// Track where we are: prolog (before root), inside root, or epilog (after root).
@@ -67,7 +83,9 @@ func Decode(src []byte) (*pb.XmlDocumentWithMetadata, error) {
 		case xml.ProcInst:
 			pi := &pb.XmlProcessingInstruction{Target: t.Target, Data: string(t.Inst)}
 			if t.Target == "xml" && !sawRoot {
-				applyXMLDeclaration(doc, string(t.Inst))
+				// Declaration already applied from the pre-parse byte scan
+				// (which runs on the transcoded-but-not-yet-rewritten buffer
+				// so the original declared encoding survives).
 				continue
 			}
 			if !sawRoot {
@@ -105,7 +123,7 @@ func Decode(src []byte) (*pb.XmlDocumentWithMetadata, error) {
 			}
 
 		case xml.StartElement:
-			startTag := raw[tokOffset:dec.InputOffset()]
+			startTag := parsed[tokOffset:dec.InputOffset()]
 			literals := extractAttrLiterals(startTag)
 			el := startElementToProto(t, stack, literals)
 			if !sawRoot {
@@ -127,7 +145,7 @@ func Decode(src []byte) (*pb.XmlDocumentWithMetadata, error) {
 			// byte AFTER the start tag — which for <foo/> is identical to the
 			// start-element end offset. We approximate by scanning the raw tag.
 			top := stack[len(stack)-1]
-			if isSelfClosingTag(raw, top) {
+			if isSelfClosingTag(parsed, top) {
 				top.SelfClosing = true
 			}
 			stack = stack[:len(stack)-1]
@@ -161,7 +179,7 @@ func Decode(src []byte) (*pb.XmlDocumentWithMetadata, error) {
 				}
 				// Reconstruct raw_pieces from the source bytes so entity /
 				// character refs are preserved.
-				if pieces := scanTextPieces(raw[tokOffset:endOff]); pieces != nil {
+				if pieces := scanTextPieces(parsed[tokOffset:endOff]); pieces != nil {
 					txt.RawPieces = pieces
 				}
 				appendChild(stack, &pb.XmlNode{Node: &pb.XmlNode_Text{Text: txt}})
@@ -691,6 +709,49 @@ func patchXMLVersion(src []byte) []byte {
 		}
 	}
 	return src
+}
+
+// transcodeToUTF8 converts the source bytes to UTF-8 when a non-UTF-8
+// encoding is detected (via BOM or the <?xml encoding=...?> declaration).
+// Pure-ASCII / UTF-8 inputs pass through unchanged. The declaration is
+// not rewritten here — the caller handles that after reading the
+// declared encoding for the proto.
+func transcodeToUTF8(src []byte, enc *pb.XmlEncodingInfo) ([]byte, error) {
+	e, name, _ := charset.DetermineEncoding(src, "application/xml")
+	if e == nil || strings.EqualFold(name, "utf-8") {
+		return src, nil
+	}
+	out, err := e.NewDecoder().Bytes(src)
+	if err != nil {
+		return nil, fmt.Errorf("charset %s: %w", name, err)
+	}
+	// Strip UTF-8 BOM if the decoder introduced one.
+	return bytes.TrimPrefix(out, []byte{0xEF, 0xBB, 0xBF}), nil
+}
+
+// rewriteDeclaredEncoding replaces the value of the encoding= pseudo-attr
+// inside the XML declaration. If there's no declaration or no encoding
+// attr, returns src unchanged.
+func rewriteDeclaredEncoding(src []byte, target string) []byte {
+	idx := bytes.Index(src, []byte("<?xml"))
+	if idx < 0 {
+		return src
+	}
+	end := bytes.Index(src[idx:], []byte("?>"))
+	if end < 0 {
+		return src
+	}
+	decl := src[idx : idx+end]
+	re := regexp.MustCompile(`encoding\s*=\s*("[^"]*"|'[^']*')`)
+	replaced := re.ReplaceAll(decl, []byte(`encoding="`+target+`"`))
+	if bytes.Equal(replaced, decl) {
+		return src
+	}
+	out := make([]byte, 0, len(src)+len(replaced)-len(decl))
+	out = append(out, src[:idx]...)
+	out = append(out, replaced...)
+	out = append(out, src[idx+end:]...)
+	return out
 }
 
 func detectEncoding(src []byte) *pb.XmlEncodingInfo {

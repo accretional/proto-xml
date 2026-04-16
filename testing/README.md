@@ -45,10 +45,17 @@ source so it stays grepable.
   (`patchXMLVersion` in `internal/xmlcodec/decode.go`). RawBytes still
   preserves the original. Effect: XML 1.1-only name characters and the C1
   control-character requirements are not validated by the parser.
-- **Non-UTF-8 character encodings.** `CharsetReader` is a no-op pass-through.
-  Non-UTF-8 byte streams will fail to decode if they contain non-ASCII
-  bytes outside the UTF-8 representation. UTF-16 BOMs are detected
-  (`detectEncoding`) but not transcoded.
+- **Non-UTF-8 character encodings.** Inputs with a non-UTF-8 BOM or a
+  non-UTF-8 declared encoding are transcoded to UTF-8 upfront via
+  `golang.org/x/net/html/charset` (`transcodeToUTF8`). The original bytes
+  are preserved in `RawBytes`; internal byte-offset scanning runs on the
+  transcoded buffer so CDATA / attribute-literal / text-piece detection
+  works regardless of source encoding. `XmlEncodingInfo.BomType` +
+  `ActualEncoding` record what the source was; the declared encoding is
+  preserved in `doc.CharacterEncodingScheme`. **Caveat:** the structural
+  encoder always emits UTF-8, so a structural re-encode of a UTF-16 input
+  produces different bytes than the original — use the raw-bytes encode
+  path when byte identity matters.
 - **DOCTYPE internal subset.** `parseDoctypeDirective` captures only the
   root name, public/system IDs, and a `HasInternalSubset` flag. Internal
   subsets (`<!ELEMENT ...>`, `<!ATTLIST ...>`, `<!ENTITY ...>`) are not
