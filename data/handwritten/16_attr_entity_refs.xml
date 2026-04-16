@@ -1,0 +1,2 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<config quote='single &amp; quoted' both="amp:&amp; lt:&lt; gt:&gt; apos:&apos; quot:&quot;" numeric="decimal=&#169; hex=&#x2764; big=&#8364;" plain="nothing special"/>

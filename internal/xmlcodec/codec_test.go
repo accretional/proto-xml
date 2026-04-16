@@ -219,6 +219,31 @@ func TestRoundTripStructural(t *testing.T) {
 	}
 }
 
+func TestAttrLiteralRoundTrip(t *testing.T) {
+	// Structural re-encode must preserve entity/char refs inside attribute
+	// values byte-for-byte when the literal form was captured at decode.
+	src := []byte(`<r a="amp=&amp; lt=&lt; apos=&apos;" b='hex=&#x4E; dec=&#65;' c="plain"/>`)
+	md, err := Decode(src)
+	if err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	out, err := EncodeWithOptions(md.Document, EncodeOptions{OmitXMLDeclaration: true})
+	if err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+	if string(out) != string(src) {
+		t.Errorf("attr literal round-trip mismatch\ngot:  %s\nwant: %s", out, src)
+	}
+	// Sanity: a.LiteralValue should exist with multiple pieces.
+	el := md.Document.DocumentElement
+	if len(el.Attributes) == 0 || el.Attributes[0].LiteralValue == nil {
+		t.Fatalf("attr literal value not captured")
+	}
+	if len(el.Attributes[0].LiteralValue.Pieces) < 3 {
+		t.Errorf("expected multiple literal pieces, got %d", len(el.Attributes[0].LiteralValue.Pieces))
+	}
+}
+
 func TestDecodeBOM(t *testing.T) {
 	src := append([]byte{0xEF, 0xBB, 0xBF}, []byte(`<r/>`)...)
 	md, err := Decode(src)

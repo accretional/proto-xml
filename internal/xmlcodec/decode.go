@@ -105,7 +105,9 @@ func Decode(src []byte) (*pb.XmlDocumentWithMetadata, error) {
 			}
 
 		case xml.StartElement:
-			el := startElementToProto(t, stack)
+			startTag := raw[tokOffset:dec.InputOffset()]
+			literals := extractAttrLiterals(startTag)
+			el := startElementToProto(t, stack, literals)
 			if !sawRoot {
 				doc.DocumentElement = el
 				sawRoot = true
@@ -193,8 +195,10 @@ func appendChild(stack []*pb.XmlElement, n *pb.XmlNode) {
 
 // startElementToProto converts an xml.StartElement into an XmlElement. Namespace
 // declarations (xmlns / xmlns:prefix attributes) are routed into
-// NamespaceDeclarations instead of Attributes.
-func startElementToProto(t xml.StartElement, stack []*pb.XmlElement) *pb.XmlElement {
+// NamespaceDeclarations instead of Attributes. The literals map (keyed by
+// qualified name) carries the exact literal form of each attribute value
+// so that entity / character refs survive round-trip.
+func startElementToProto(t xml.StartElement, stack []*pb.XmlElement, literals map[string]attrLiteral) *pb.XmlElement {
 	el := &pb.XmlElement{
 		NamespaceName: t.Name.Space,
 		LocalName:     t.Name.Local,
@@ -251,6 +255,12 @@ func startElementToProto(t xml.StartElement, stack []*pb.XmlElement) *pb.XmlElem
 			attr.QualifiedName = attr.Prefix + ":" + attr.LocalName
 		} else {
 			attr.QualifiedName = attr.LocalName
+		}
+		if lit, ok := literals[attr.QualifiedName]; ok {
+			attr.LiteralValue = &pb.XmlAttributeValueLiteral{
+				QuoteChar: lit.quote,
+				Pieces:    lit.pieces,
+			}
 		}
 		// Reserved xml:* attributes get mirrored onto the element's strong fields.
 		if a.Name.Space == "http://www.w3.org/XML/1998/namespace" || (a.Name.Space == "" && strings.HasPrefix(a.Name.Local, "xml:")) {
@@ -356,6 +366,150 @@ func isSelfClosingTag(src []byte, el *pb.XmlElement) bool {
 	// but good enough for codec metadata).
 	pat := regexp.MustCompile(`<` + regexp.QuoteMeta(name) + `(\s[^<>]*)?/>`)
 	return pat.Match(src)
+}
+
+// attrLiteral is the literal representation of an attribute's value as it
+// appeared in the source — delimiter quote plus the already-split pieces.
+type attrLiteral struct {
+	quote  pb.XmlQuoteChar
+	pieces []*pb.XmlAttributeValuePiece
+}
+
+// extractAttrLiterals parses a raw start-tag slice (from the leading `<`
+// through the trailing `>` or `/>`) and returns, for every attribute present,
+// the literal value pieces keyed by qualified name.
+//
+// Hand-rolled because Go's encoding/xml already expanded the refs by the time
+// we see the StartElement token.
+func extractAttrLiterals(tag []byte) map[string]attrLiteral {
+	out := map[string]attrLiteral{}
+	i := 0
+	n := len(tag)
+	// Skip `<` and element name.
+	if i < n && tag[i] == '<' {
+		i++
+	}
+	for i < n && !isAttrNameBoundary(tag[i]) {
+		i++
+	}
+	for i < n {
+		// Skip whitespace.
+		for i < n && isXMLSpace(tag[i]) {
+			i++
+		}
+		if i >= n || tag[i] == '>' || tag[i] == '/' {
+			break
+		}
+		// Read attribute name.
+		nameStart := i
+		for i < n && tag[i] != '=' && !isXMLSpace(tag[i]) && tag[i] != '>' {
+			i++
+		}
+		name := string(tag[nameStart:i])
+		// An empty name means we couldn't advance — bail out rather than loop.
+		if nameStart == i {
+			break
+		}
+		// Skip whitespace before `=`.
+		for i < n && isXMLSpace(tag[i]) {
+			i++
+		}
+		if i >= n || tag[i] != '=' {
+			// Malformed; give up.
+			break
+		}
+		i++ // skip `=`
+		for i < n && isXMLSpace(tag[i]) {
+			i++
+		}
+		if i >= n {
+			break
+		}
+		if tag[i] != '"' && tag[i] != '\'' {
+			// Unquoted attribute value — malformed XML; bail out.
+			break
+		}
+		quoteChar := pb.XmlQuoteChar_XML_QUOTE_DOUBLE
+		if tag[i] == '\'' {
+			quoteChar = pb.XmlQuoteChar_XML_QUOTE_SINGLE
+		}
+		delim := tag[i]
+		i++
+		valueStart := i
+		for i < n && tag[i] != delim {
+			i++
+		}
+		value := tag[valueStart:i]
+		if i < n {
+			i++ // skip closing quote
+		}
+		out[name] = attrLiteral{
+			quote:  quoteChar,
+			pieces: splitAttrValueIntoPieces(value),
+		}
+	}
+	return out
+}
+
+func isAttrNameBoundary(b byte) bool { return isXMLSpace(b) || b == '>' || b == '/' }
+
+func isXMLSpace(b byte) bool {
+	switch b {
+	case ' ', '\t', '\r', '\n':
+		return true
+	}
+	return false
+}
+
+// splitAttrValueIntoPieces splits an already-unquoted literal attribute value
+// into character_data / entity_ref_name / char_ref_codepoint pieces. Matches
+// the shape of scanTextPieces but for attribute content.
+func splitAttrValueIntoPieces(raw []byte) []*pb.XmlAttributeValuePiece {
+	s := string(raw)
+	var out []*pb.XmlAttributeValuePiece
+	i := 0
+	for i < len(s) {
+		amp := strings.IndexByte(s[i:], '&')
+		if amp < 0 {
+			if i < len(s) {
+				out = append(out, &pb.XmlAttributeValuePiece{
+					Piece: &pb.XmlAttributeValuePiece_CharacterData{CharacterData: s[i:]},
+				})
+			}
+			break
+		}
+		if amp > 0 {
+			out = append(out, &pb.XmlAttributeValuePiece{
+				Piece: &pb.XmlAttributeValuePiece_CharacterData{CharacterData: s[i : i+amp]},
+			})
+		}
+		rest := s[i+amp:]
+		semi := strings.IndexByte(rest, ';')
+		if semi < 0 {
+			out = append(out, &pb.XmlAttributeValuePiece{
+				Piece: &pb.XmlAttributeValuePiece_CharacterData{CharacterData: rest},
+			})
+			break
+		}
+		ref := rest[1:semi] // without & and ;
+		if strings.HasPrefix(ref, "#") {
+			isHex := strings.HasPrefix(ref, "#x") || strings.HasPrefix(ref, "#X")
+			out = append(out, &pb.XmlAttributeValuePiece{
+				Piece: &pb.XmlAttributeValuePiece_CharRefCodepoint{CharRefCodepoint: parseCodepoint(ref[1:])},
+			})
+			if isHex {
+				out = append(out, &pb.XmlAttributeValuePiece{
+					Piece: &pb.XmlAttributeValuePiece_CharRefIsHex{CharRefIsHex: true},
+				})
+			}
+		} else {
+			out = append(out, &pb.XmlAttributeValuePiece{
+				Piece: &pb.XmlAttributeValuePiece_EntityRefName{EntityRefName: ref},
+			})
+		}
+		i = i + amp + semi + 1
+	}
+	return out
 }
 
 // scanTextPieces walks the raw bytes of a CharData token and splits it into

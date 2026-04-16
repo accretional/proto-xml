@@ -171,7 +171,7 @@ func writeElement(buf *bytes.Buffer, el *pb.XmlElement) error {
 				}
 			}
 		}
-		fmt.Fprintf(buf, ` %s="%s"`, name, escapeAttrValue(a.NormalizedValue))
+		writeAttribute(buf, name, a)
 	}
 
 	if len(el.Children) == 0 && el.SelfClosing {
@@ -249,6 +249,59 @@ func writeTextPiece(buf *bytes.Buffer, p *pb.XmlTextPiece) {
 	case *pb.XmlTextPiece_CharRefIsHex:
 		// hex marker for the preceding codepoint — already emitted as decimal;
 		// callers that want hex encoding should emit the codepoint themselves.
+	}
+}
+
+// writeAttribute writes ` name=<quote>value<quote>` using the literal form
+// when XmlAttribute.LiteralValue is populated (preserving the original entity
+// and character references), falling back to the escaped normalized value.
+func writeAttribute(buf *bytes.Buffer, name string, a *pb.XmlAttribute) {
+	buf.WriteByte(' ')
+	buf.WriteString(name)
+	buf.WriteByte('=')
+	if lit := a.LiteralValue; lit != nil && len(lit.Pieces) > 0 {
+		quote := byte('"')
+		if lit.QuoteChar == pb.XmlQuoteChar_XML_QUOTE_SINGLE {
+			quote = '\''
+		}
+		buf.WriteByte(quote)
+		writeAttrLiteralPieces(buf, lit.Pieces)
+		buf.WriteByte(quote)
+		return
+	}
+	buf.WriteByte('"')
+	buf.WriteString(escapeAttrValue(a.NormalizedValue))
+	buf.WriteByte('"')
+}
+
+func writeAttrLiteralPieces(buf *bytes.Buffer, pieces []*pb.XmlAttributeValuePiece) {
+	for i := 0; i < len(pieces); i++ {
+		p := pieces[i]
+		switch v := p.Piece.(type) {
+		case *pb.XmlAttributeValuePiece_CharacterData:
+			buf.WriteString(v.CharacterData)
+		case *pb.XmlAttributeValuePiece_EntityRefName:
+			buf.WriteByte('&')
+			buf.WriteString(v.EntityRefName)
+			buf.WriteByte(';')
+		case *pb.XmlAttributeValuePiece_CharRefCodepoint:
+			// Peek ahead: a trailing char_ref_is_hex=true marker means the
+			// source used hex form. Emit accordingly and consume the marker.
+			hex := false
+			if i+1 < len(pieces) {
+				if _, ok := pieces[i+1].Piece.(*pb.XmlAttributeValuePiece_CharRefIsHex); ok {
+					hex = true
+					i++
+				}
+			}
+			if hex {
+				fmt.Fprintf(buf, "&#x%X;", v.CharRefCodepoint)
+			} else {
+				fmt.Fprintf(buf, "&#%d;", v.CharRefCodepoint)
+			}
+		case *pb.XmlAttributeValuePiece_CharRefIsHex:
+			// Orphan hex marker (no preceding codepoint) — skip.
+		}
 	}
 }
 
