@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom">
+  <channel>
+    <title>proto-xml demo feed</title>
+    <link>https://example.com/feed</link>
+    <description>A sample RSS 2.0 feed used to demonstrate the proto-xml codec.</description>
+    <language>en-US</language>
+    <atom:link href="https://example.com/feed" rel="self" type="application/rss+xml"/>
+    <item>
+      <title>Hello, world</title>
+      <link>https://example.com/posts/1</link>
+      <guid isPermaLink="true">https://example.com/posts/1</guid>
+      <pubDate>Wed, 15 Apr 2026 12:00:00 GMT</pubDate>
+      <description><![CDATA[<p>The first post — welcome!</p>]]></description>
+    </item>
+    <item>
+      <title>Proto-encoded XML</title>
+      <link>https://example.com/posts/2</link>
+      <guid isPermaLink="true">https://example.com/posts/2</guid>
+      <pubDate>Wed, 15 Apr 2026 13:00:00 GMT</pubDate>
+      <description>A brief look at representing XML as protobuf.</description>
+    </item>
+  </channel>
+</rss>

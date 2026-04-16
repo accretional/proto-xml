@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<order id="A-42" qty="3" total="19.99">
+  <item sku="WIDGET-1"/>
+  <item sku="WIDGET-2"/>
+  <item sku="WIDGET-3"/>
+</order>

@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<doc xml:lang="en-US" xml:base="http://example.com/docs/">
+  <section xml:id="sec-intro">
+    <para xml:space="preserve">   preserved   whitespace   </para>
+    <para xml:lang="fr">Bonjour le monde</para>
+  </section>
+</doc>

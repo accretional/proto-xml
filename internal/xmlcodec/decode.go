@@ -20,7 +20,12 @@ func Decode(src []byte) (*pb.XmlDocumentWithMetadata, error) {
 	enc := detectEncoding(src)
 	cdataRanges := scanCDATARanges(src)
 
-	dec := xml.NewDecoder(bytes.NewReader(src))
+	// encoding/xml only supports XML 1.0. Patch the version in the declaration
+	// so that 1.1 documents decode structurally; the true declared version is
+	// still applied to the proto via applyXMLDeclaration below.
+	parsed := patchXMLVersion(src)
+
+	dec := xml.NewDecoder(bytes.NewReader(parsed))
 	dec.Strict = true
 	dec.CharsetReader = func(_ string, input io.Reader) (io.Reader, error) {
 		// Treat non-utf-8 encodings transparently: we rely on the byte stream
@@ -31,6 +36,13 @@ func Decode(src []byte) (*pb.XmlDocumentWithMetadata, error) {
 
 	doc := &pb.XmlDocument{
 		WellFormed: true,
+	}
+	// Apply declared version/encoding/standalone from the ORIGINAL bytes so
+	// that version="1.1" is recorded faithfully even though stdlib sees 1.0.
+	if idx := bytes.Index(src, []byte("<?xml")); idx >= 0 {
+		if end := bytes.Index(src[idx:], []byte("?>")); end > 0 {
+			applyXMLDeclaration(doc, string(src[idx+len("<?xml"):idx+end]))
+		}
 	}
 
 	// Track where we are: prolog (before root), inside root, or epilog (after root).
@@ -218,6 +230,28 @@ func startElementToProto(t xml.StartElement, stack []*pb.XmlElement) *pb.XmlElem
 			NormalizedValue: a.Value,
 			Specified:       true,
 		}
+		// Resolve attribute prefix. stdlib may populate Name.Space with
+		// either the resolved namespace URI (if declared) or the bare prefix
+		// (if undeclared). Preserve whichever form lets round-trip keep the
+		// qualified name.
+		if a.Name.Space != "" {
+			found := false
+			for p, uri := range inScope {
+				if uri == a.Name.Space && p != "" {
+					attr.Prefix = p
+					found = true
+					break
+				}
+			}
+			if !found {
+				attr.Prefix = a.Name.Space
+			}
+		}
+		if attr.Prefix != "" {
+			attr.QualifiedName = attr.Prefix + ":" + attr.LocalName
+		} else {
+			attr.QualifiedName = attr.LocalName
+		}
 		// Reserved xml:* attributes get mirrored onto the element's strong fields.
 		if a.Name.Space == "http://www.w3.org/XML/1998/namespace" || (a.Name.Space == "" && strings.HasPrefix(a.Name.Local, "xml:")) {
 			switch strings.TrimPrefix(a.Name.Local, "xml:") {
@@ -239,13 +273,20 @@ func startElementToProto(t xml.StartElement, stack []*pb.XmlElement) *pb.XmlElem
 		el.Attributes = append(el.Attributes, attr)
 	}
 
-	// Resolve prefix/qualified_name for the element itself
+	// Resolve prefix/qualified_name for the element itself.
+	resolved := false
 	if t.Name.Space != "" {
 		for prefix, uri := range inScope {
 			if uri == t.Name.Space {
 				el.Prefix = prefix
+				resolved = true
 				break
 			}
+		}
+		// stdlib populates Name.Space with the bare prefix when no xmlns
+		// declaration is found; preserve it so round-trips keep the prefix.
+		if !resolved {
+			el.Prefix = t.Name.Space
 		}
 	}
 	if el.Prefix != "" {
@@ -473,6 +514,29 @@ func parsePseudoAttrs(s string) map[string]string {
 		out[m[1]] = v
 	}
 	return out
+}
+
+// patchXMLVersion rewrites `version="1.1"` → `version="1.0"` inside the XML
+// declaration so stdlib's decoder accepts the stream. Byte length is
+// preserved so offset tracking (used for CDATA detection) stays accurate.
+func patchXMLVersion(src []byte) []byte {
+	idx := bytes.Index(src, []byte("<?xml"))
+	if idx < 0 {
+		return src
+	}
+	end := bytes.Index(src[idx:], []byte("?>"))
+	if end < 0 {
+		return src
+	}
+	decl := src[idx : idx+end]
+	for _, pat := range [][]byte{[]byte(`version="1.1"`), []byte(`version='1.1'`)} {
+		if rel := bytes.Index(decl, pat); rel >= 0 {
+			out := append([]byte(nil), src...)
+			copy(out[idx+rel:], bytes.Replace(pat, []byte("1.1"), []byte("1.0"), 1))
+			return out
+		}
+	}
+	return src
 }
 
 func detectEncoding(src []byte) *pb.XmlEncodingInfo {

@@ -156,15 +156,18 @@ func writeElement(buf *bytes.Buffer, el *pb.XmlElement) error {
 			// already emitted via writeReservedXMLAttrs when set on el
 			continue
 		}
-		name := a.LocalName
-		if a.Prefix != "" {
-			name = a.Prefix + ":" + a.LocalName
-		} else if a.NamespaceName != "" {
-			// Resolve prefix from element's in-scope namespaces.
-			for p, uri := range el.GetInScopeNamespaces() {
-				if uri == a.NamespaceName && p != "" {
-					name = p + ":" + a.LocalName
-					break
+		name := a.QualifiedName
+		if name == "" {
+			name = a.LocalName
+			if a.Prefix != "" {
+				name = a.Prefix + ":" + a.LocalName
+			} else if a.NamespaceName != "" {
+				// Resolve prefix from element's in-scope namespaces.
+				for p, uri := range el.GetInScopeNamespaces() {
+					if uri == a.NamespaceName && p != "" {
+						name = p + ":" + a.LocalName
+						break
+					}
 				}
 			}
 		}

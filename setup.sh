@@ -87,4 +87,15 @@ fi
 log "resolving go dependencies"
 go mod tidy
 
+# --- programmatic test fixtures -----------------------------------------------
+
+PROG_FIXTURES_DIR="$ROOT/data/programmatic"
+mkdir -p "$PROG_FIXTURES_DIR"
+if [ -z "$(ls -A "$PROG_FIXTURES_DIR" 2>/dev/null)" ]; then
+  log "generating programmatic XML fixtures"
+  go run ./cmd/gen-fixtures -out "$PROG_FIXTURES_DIR"
+else
+  log "programmatic fixtures present"
+fi
+
 log "setup complete"

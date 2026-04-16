@@ -32,4 +32,20 @@ See `AGENTS.md` — same rules apply. This file is specifically for Claude Code 
 
 ## ChromeRPC usage
 
-`chromerpc` is a Go gRPC client for Chrome DevTools Protocol. Dial `localhost:50051`, then send `AutomationSequence` with `navigate` + `screenshot` steps. Assume a server is running; if not, the screenshot generation step fails gracefully and `about.md` references placeholder paths.
+`chromerpc` is a Go gRPC client for Chrome DevTools Protocol. Dial `localhost:50051`, then send `AutomationSequence` with `navigate` + `screenshot` steps. Assume a server is running; if not, the screenshot generation step fails gracefully and `about.md` references placeholder paths under `docs/screenshots/` (`rss-rendered.png`, `rss-decoded-json.png`, `rss-diff.png`).
+
+## Gotchas observed in this repo
+
+- `internal/xmlcodec/decode.go` references `patchXMLVersion` to coerce
+  `version="1.1"` declarations to `1.0` in the bytes handed to `encoding/xml`
+  (which only supports 1.0). The original version is captured separately
+  via `applyXMLDeclaration`. If you re-introduce XML 1.1 fixtures, make
+  sure that helper still exists — it was missing from an earlier commit
+  and broke `go vet` until restored.
+- `setup.sh` regenerates `data/programmatic/` from `cmd/gen-fixtures` only
+  when the directory is empty. If you change a programmatic fixture's
+  shape, delete the file (or the dir) before re-running setup.
+- `cmd/gen-fixtures` is run via `go run`, so changes to it are picked up
+  automatically — no separate build step.
+- The validation test uses `runtime.Caller` to locate `data/`, so
+  `go test` works from any cwd. Don't change to `os.Getwd()` based paths.

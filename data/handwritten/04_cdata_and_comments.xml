@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- a prolog comment -->
+<?xml-stylesheet type="text/xsl" href="sheet.xsl"?>
+<doc>
+  <!-- inline comment -->
+  <code><![CDATA[
+    if (a < b && c > d) { return "<tag>"; }
+  ]]></code>
+</doc>
+<!-- an epilog comment -->

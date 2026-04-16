@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/"
+               xmlns:m="urn:example:math">
+  <soap:Body>
+    <m:Add>
+      <m:a>2</m:a>
+      <m:b>3</m:b>
+    </m:Add>
+  </soap:Body>
+</soap:Envelope>

@@ -1,0 +1,2 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0"><channel><title>proto-xml programmatic feed</title><link>https://example.com/proto-feed</link><description>Generated directly from an XmlDocument proto.</description><item><title>Proto-generated post</title><link>https://example.com/proto-feed/1</link><description><![CDATA[<p>Body with <strong>inline</strong> HTML.</p>]]></description></item></channel></rss>

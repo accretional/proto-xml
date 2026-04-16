@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom" xml:lang="en">
+  <title>proto-xml demo atom feed</title>
+  <link href="https://example.com/atom"/>
+  <updated>2026-04-15T12:00:00Z</updated>
+  <id>urn:uuid:00000000-0000-0000-0000-000000000001</id>
+  <entry>
+    <title>First entry</title>
+    <id>urn:uuid:00000000-0000-0000-0000-000000000002</id>
+    <updated>2026-04-15T12:00:00Z</updated>
+    <summary>An atom-format post.</summary>
+  </entry>
+</feed>

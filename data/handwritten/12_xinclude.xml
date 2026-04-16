@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<document xmlns:xi="http://www.w3.org/2001/XInclude">
+  <chapter>
+    <title>Chapter 1</title>
+    <xi:include href="ch1_body.xml"/>
+  </chapter>
+  <chapter>
+    <title>Chapter 2</title>
+    <xi:include href="ch2_body.xml">
+      <xi:fallback><para>Chapter 2 is unavailable.</para></xi:fallback>
+    </xi:include>
+  </chapter>
+</document>

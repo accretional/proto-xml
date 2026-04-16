@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!DOCTYPE catalog SYSTEM "catalog.dtd">
+<catalog>
+  <book id="b1"><title>XML 1.0</title></book>
+  <book id="b2"><title>Namespaces in XML</title></book>
+</catalog>
