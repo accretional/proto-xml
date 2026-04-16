@@ -18,7 +18,7 @@ See `AGENTS.md` — same rules apply. This file is specifically for Claude Code 
 
 ## Code layout
 
-- `internal/xmlcodec/` — encoder (proto → XML bytes) and decoder (XML bytes → proto). `XmlDocumentWithMetadata.raw_bytes` is always set by Decode and required by Encode for round-trip fidelity.
+- `xmlcodec/` — encoder (proto → XML bytes) and decoder (XML bytes → proto). `XmlDocumentWithMetadata.raw_bytes` is always set by Decode and required by Encode for round-trip fidelity.
 - `data/` — XML fixtures covering: namespaces, CDATA, comments, processing instructions, DOCTYPE/DTD, entities, character references, `xml:space`/`xml:lang`/`xml:id`/`xml:base`, mixed content, XInclude, BOMs, XML 1.0 vs 1.1. Some are hand-written, others generated from `XmlDocument` protos.
 - `testing/validation/` — one test running across every file in `data/`.
 - `testing/fuzz/` — Go native fuzz tests (`go test -fuzz`).
@@ -36,7 +36,7 @@ See `AGENTS.md` — same rules apply. This file is specifically for Claude Code 
 
 ## Gotchas observed in this repo
 
-- `internal/xmlcodec/decode.go` references `patchXMLVersion` to coerce
+- `xmlcodec/decode.go` references `patchXMLVersion` to coerce
   `version="1.1"` declarations to `1.0` in the bytes handed to `encoding/xml`
   (which only supports 1.0). The original version is captured separately
   via `applyXMLDeclaration`. If you re-introduce XML 1.1 fixtures, make

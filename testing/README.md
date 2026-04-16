@@ -42,7 +42,7 @@ source so it stays grepable.
 - **XML 1.1 parsing.** `encoding/xml` only accepts `version="1.0"`. We
   detect the original declaration, store `XmlVersion = 1_1` on the proto,
   then patch the in-memory bytes to `1.0` for parsing only
-  (`patchXMLVersion` in `internal/xmlcodec/decode.go`). RawBytes still
+  (`patchXMLVersion` in `xmlcodec/decode.go`). RawBytes still
   preserves the original. Effect: XML 1.1-only name characters and the C1
   control-character requirements are not validated by the parser.
 - **Non-UTF-8 character encodings.** Inputs with a non-UTF-8 BOM or a

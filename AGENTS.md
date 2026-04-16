@@ -23,7 +23,7 @@ Each script is a superset of the previous: `LET_IT_RIP → test → build → se
 ```
 proto/openformat/v1/        vendored .proto sources (xml.proto + mime.proto)
 gen/go/openformat/v1/       generated Go (go_package per proto: openformat/gen/go/openformat/v1;openformatv1)
-internal/xmlcodec/          encoder + decoder
+xmlcodec/                   encoder + decoder (public package)
 data/                       XML test fixtures (hand-written + programmatically generated)
 testing/validation/         validation test suite across all data/
 testing/fuzz/               fuzz tests

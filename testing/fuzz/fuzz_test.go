@@ -15,7 +15,7 @@ import (
 	"runtime"
 	"testing"
 
-	"openformat/internal/xmlcodec"
+	"openformat/xmlcodec"
 )
 
 func seedCorpus(f *testing.F) {

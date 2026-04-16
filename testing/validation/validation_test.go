@@ -10,7 +10,7 @@ import (
 	"testing"
 
 	pb "openformat/gen/go/openformat/v1"
-	"openformat/internal/xmlcodec"
+	"openformat/xmlcodec"
 )
 
 // dataDir locates the repo-level data/ directory relative to this test file,

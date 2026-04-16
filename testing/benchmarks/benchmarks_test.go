@@ -9,7 +9,7 @@ import (
 	"runtime"
 	"testing"
 
-	"openformat/internal/xmlcodec"
+	"openformat/xmlcodec"
 )
 
 func fixtures(tb testing.TB) []fixture {

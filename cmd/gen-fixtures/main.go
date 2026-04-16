@@ -10,7 +10,7 @@ import (
 	"path/filepath"
 
 	pb "openformat/gen/go/openformat/v1"
-	"openformat/internal/xmlcodec"
+	"openformat/xmlcodec"
 )
 
 func main() {

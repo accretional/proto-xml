@@ -38,7 +38,7 @@ import (
     "fmt"
     "os"
 
-    "openformat/internal/xmlcodec"
+    "openformat/xmlcodec"
 )
 
 func main() {
@@ -152,7 +152,7 @@ matters.
 
 ## Where to go next
 
-- `internal/xmlcodec/` — the codec itself.
+- `xmlcodec/` — the codec itself.
 - `proto/openformat/v1/xml.proto` — the message definitions
   (vendored from `accretional/mime-proto`).
 - `testing/README.md` — full test strategy and the list of known semantic

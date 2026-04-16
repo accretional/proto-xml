@@ -7,7 +7,7 @@ value-to-risk. Everything here is concrete enough to implement; the fuzzier
 ## 1. Attribute-value entity/char-ref fidelity — **done**
 
 `XmlAttribute.LiteralValue` is now populated by pre-scanning the raw
-start-tag bytes (`extractAttrLiterals` in `internal/xmlcodec/decode.go`).
+start-tag bytes (`extractAttrLiterals` in `xmlcodec/decode.go`).
 The encoder emits from the literal pieces when present, preserving both
 the entity/char-ref form and the original quote character. Fixture:
 `data/handwritten/16_attr_entity_refs.xml`. Unit test:
@@ -24,7 +24,7 @@ PNGs when `CHROMERPC_ADDR` is unreachable.
 
 Non-UTF-8 inputs (UTF-16 with BOM, windows-1252, etc.) are transcoded to
 UTF-8 upfront via `golang.org/x/net/html/charset` (`transcodeToUTF8` in
-`internal/xmlcodec/decode.go`). Byte-offset scanning runs on the
+`xmlcodec/decode.go`). Byte-offset scanning runs on the
 transcoded buffer; `RawBytes` still holds the original. Declared encoding
 survives on `doc.CharacterEncodingScheme`; BOM + actual-encoding survive
 on `EncodingInfo`. Fixture: `data/handwritten/17_utf16le_bom.xml`. Unit

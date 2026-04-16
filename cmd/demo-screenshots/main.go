@@ -29,7 +29,7 @@ import (
 	"golang.org/x/image/math/fixed"
 
 	pb "openformat/gen/go/openformat/v1"
-	"openformat/internal/xmlcodec"
+	"openformat/xmlcodec"
 )
 
 const defaultChromeRPCAddr = "localhost:50051"
