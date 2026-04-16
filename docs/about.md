@@ -108,7 +108,8 @@ comments, and PIs. It does not promise byte-identical output — see
 | Namespace declarations            | yes                  | yes                             | yes                            |
 | `xml:lang` / `space` / `id` / `base` | yes               | yes                             | yes                            |
 | CDATA boundaries                  | yes (offset scan)    | yes                             | yes                            |
-| Entity vs char-ref distinction    | yes (`RawPieces`)    | yes (when `RawPieces` set)      | yes                            |
+| Entity vs char-ref in text        | yes (`RawPieces`)    | yes (when `RawPieces` set)      | yes                            |
+| Entity vs char-ref in attr values | yes (`LiteralValue`) | yes (when `LiteralValue` set)   | yes                            |
 | Comments and PIs                  | yes                  | yes                             | yes                            |
 | DOCTYPE name + external IDs       | yes                  | yes                             | yes                            |
 | DOCTYPE internal subset           | flag only            | dropped                         | yes                            |

@@ -57,11 +57,12 @@ list as new ones turn up.
   patch `1.1` → `1.0` in-memory just to get the bytes through the parser
   (see `patchXMLVersion`). Anything that depends on 1.1-only character
   rules will silently parse as 1.0.
-- Entity / character references inside attribute values are lost (stdlib
-  resolves them before handing us the value). Element text content is
-  preserved via the `RawPieces` reconstruction; attribute values aren't.
-  A faithful attribute round-trip would need a parallel `raw_pieces` on
-  `XmlAttribute`.
+- Entity / character references inside attribute values are resolved by
+  stdlib before we see the token. To preserve them we pre-scan the raw
+  start-tag bytes and populate `XmlAttribute.LiteralValue` (pieces +
+  original quote character). Structural encode emits from the literal
+  form when present, so `foo="&amp;"` no longer round-trips to
+  `foo="&"`.
 - `xml:space="preserve"` is captured on the element but the structural
   encoder doesn't currently use it as a hint for whether to elide
   element-content whitespace text nodes. (Today we never elide, so

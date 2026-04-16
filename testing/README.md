@@ -56,8 +56,11 @@ source so it stays grepable.
   the raw-bytes encode path if you need DOCTYPE preservation.
 - **Entity resolution.** `encoding/xml` resolves the five predefined
   entities (`&lt; &gt; &amp; &quot; &apos;`) and numeric character refs
-  during decode. `XmlText.RawPieces` is populated by re-scanning the
-  source span so the original `&amp;` vs `&#38;` distinction survives the
+  during decode, both in text nodes and in attribute values. We re-scan
+  the source span to rebuild the literal form: `XmlText.RawPieces` for
+  text, `XmlAttribute.LiteralValue.Pieces` (plus the original quote
+  character) for attribute values. The original `&amp;` vs `&#38;`
+  distinction — and the choice of single vs double quotes — survive the
   structural encode path. Custom entities defined in an internal subset
   resolve to the empty string (stdlib behaviour).
 - **Self-closing detection.** `<foo/>` vs `<foo></foo>` is approximated:
