@@ -1,0 +1,507 @@
+package xmlcodec
+
+import (
+	"bytes"
+	"encoding/xml"
+	"fmt"
+	"io"
+	"regexp"
+	"strings"
+	"unicode/utf8"
+
+	pb "openformat/gen/go/openformat/v1"
+)
+
+// Decode parses the given XML source into an XmlDocumentWithMetadata.
+// raw_bytes on the result is always set to a copy of src.
+func Decode(src []byte) (*pb.XmlDocumentWithMetadata, error) {
+	raw := append([]byte(nil), src...)
+
+	enc := detectEncoding(src)
+	cdataRanges := scanCDATARanges(src)
+
+	dec := xml.NewDecoder(bytes.NewReader(src))
+	dec.Strict = true
+	dec.CharsetReader = func(_ string, input io.Reader) (io.Reader, error) {
+		// Treat non-utf-8 encodings transparently: we rely on the byte stream
+		// being utf-8 (the most common case). A full charset transcoder is
+		// out of scope for this codec — documented in testing/README.md.
+		return input, nil
+	}
+
+	doc := &pb.XmlDocument{
+		WellFormed: true,
+	}
+
+	// Track where we are: prolog (before root), inside root, or epilog (after root).
+	var (
+		sawRoot  bool
+		doneRoot bool
+		stack    []*pb.XmlElement // element stack (current open elements)
+	)
+
+	for {
+		tokOffset := dec.InputOffset()
+		tok, err := dec.Token()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			doc.WellFormed = false
+			return wrapDecoded(doc, enc, raw), fmt.Errorf("xml decode: %w", err)
+		}
+
+		switch t := tok.(type) {
+		case xml.ProcInst:
+			pi := &pb.XmlProcessingInstruction{Target: t.Target, Data: string(t.Inst)}
+			if t.Target == "xml" && !sawRoot {
+				applyXMLDeclaration(doc, string(t.Inst))
+				continue
+			}
+			if !sawRoot {
+				doc.PrologMisc = append(doc.PrologMisc, &pb.XmlMiscNode{
+					Node: &pb.XmlMiscNode_ProcessingInstruction{ProcessingInstruction: pi},
+				})
+			} else if doneRoot {
+				doc.EpilogMisc = append(doc.EpilogMisc, &pb.XmlMiscNode{
+					Node: &pb.XmlMiscNode_ProcessingInstruction{ProcessingInstruction: pi},
+				})
+			} else {
+				appendChild(stack, &pb.XmlNode{Node: &pb.XmlNode_ProcessingInstruction{ProcessingInstruction: pi}})
+			}
+
+		case xml.Comment:
+			cm := &pb.XmlComment{Content: string(t)}
+			if !sawRoot {
+				doc.PrologMisc = append(doc.PrologMisc, &pb.XmlMiscNode{
+					Node: &pb.XmlMiscNode_Comment{Comment: cm},
+				})
+			} else if doneRoot {
+				doc.EpilogMisc = append(doc.EpilogMisc, &pb.XmlMiscNode{
+					Node: &pb.XmlMiscNode_Comment{Comment: cm},
+				})
+			} else {
+				appendChild(stack, &pb.XmlNode{Node: &pb.XmlNode_Comment{Comment: cm}})
+			}
+
+		case xml.Directive:
+			// Parse DOCTYPE as best-effort; other directives are preserved only
+			// via raw_bytes. The DOCTYPE grammar is deliberately not fully
+			// decoded here — see testing/README.md.
+			if d := parseDoctypeDirective(string(t)); d != nil {
+				doc.Doctype = d
+			}
+
+		case xml.StartElement:
+			el := startElementToProto(t, stack)
+			if !sawRoot {
+				doc.DocumentElement = el
+				sawRoot = true
+			} else {
+				appendChild(stack, &pb.XmlNode{Node: &pb.XmlNode_Element{Element: el}})
+			}
+			stack = append(stack, el)
+
+		case xml.EndElement:
+			if len(stack) == 0 {
+				doc.WellFormed = false
+				return wrapDecoded(doc, enc, raw), fmt.Errorf("xml decode: unexpected end element </%s>", t.Name.Local)
+			}
+			// Detect self-closing by checking raw bytes: an empty-element tag has
+			// no explicit end element in the source. The xml package still emits
+			// an EndElement token, but the start offset tokOffset points to the
+			// byte AFTER the start tag — which for <foo/> is identical to the
+			// start-element end offset. We approximate by scanning the raw tag.
+			top := stack[len(stack)-1]
+			if isSelfClosingTag(raw, top) {
+				top.SelfClosing = true
+			}
+			stack = stack[:len(stack)-1]
+			if len(stack) == 0 {
+				doneRoot = true
+			}
+
+		case xml.CharData:
+			if !sawRoot || doneRoot {
+				// Whitespace between prolog/epilog items is not stored as a node;
+				// the raw_bytes preserves it exactly.
+				continue
+			}
+			text := string(t)
+			isCDATA := false
+			endOff := dec.InputOffset()
+			for _, r := range cdataRanges {
+				if int64(r.start) >= tokOffset && int64(r.end) <= endOff {
+					isCDATA = true
+					break
+				}
+			}
+			if isCDATA {
+				appendChild(stack, &pb.XmlNode{
+					Node: &pb.XmlNode_CdataSection{CdataSection: &pb.XmlCdataSection{Data: text}},
+				})
+			} else {
+				txt := &pb.XmlText{
+					Data:                     text,
+					ElementContentWhitespace: isWhitespace(text),
+				}
+				// Reconstruct raw_pieces from the source bytes so entity /
+				// character refs are preserved.
+				if pieces := scanTextPieces(raw[tokOffset:endOff]); pieces != nil {
+					txt.RawPieces = pieces
+				}
+				appendChild(stack, &pb.XmlNode{Node: &pb.XmlNode_Text{Text: txt}})
+			}
+		}
+	}
+
+	if len(stack) != 0 {
+		doc.WellFormed = false
+		return wrapDecoded(doc, enc, raw), fmt.Errorf("xml decode: %d element(s) not closed", len(stack))
+	}
+
+	return wrapDecoded(doc, enc, raw), nil
+}
+
+func wrapDecoded(doc *pb.XmlDocument, enc *pb.XmlEncodingInfo, raw []byte) *pb.XmlDocumentWithMetadata {
+	return &pb.XmlDocumentWithMetadata{
+		Document:     doc,
+		EncodingInfo: enc,
+		RawBytes:     raw,
+	}
+}
+
+func appendChild(stack []*pb.XmlElement, n *pb.XmlNode) {
+	if len(stack) == 0 {
+		return
+	}
+	parent := stack[len(stack)-1]
+	parent.Children = append(parent.Children, n)
+}
+
+// startElementToProto converts an xml.StartElement into an XmlElement. Namespace
+// declarations (xmlns / xmlns:prefix attributes) are routed into
+// NamespaceDeclarations instead of Attributes.
+func startElementToProto(t xml.StartElement, stack []*pb.XmlElement) *pb.XmlElement {
+	el := &pb.XmlElement{
+		NamespaceName: t.Name.Space,
+		LocalName:     t.Name.Local,
+	}
+
+	inScope := map[string]string{}
+	if len(stack) > 0 {
+		for k, v := range stack[len(stack)-1].GetInScopeNamespaces() {
+			inScope[k] = v
+		}
+	}
+
+	for _, a := range t.Attr {
+		// Namespace declarations
+		if a.Name.Space == "xmlns" {
+			el.NamespaceDeclarations = append(el.NamespaceDeclarations, &pb.XmlNamespaceDeclaration{
+				Prefix: a.Name.Local, NamespaceUri: a.Value,
+			})
+			inScope[a.Name.Local] = a.Value
+			continue
+		}
+		if a.Name.Space == "" && a.Name.Local == "xmlns" {
+			el.NamespaceDeclarations = append(el.NamespaceDeclarations, &pb.XmlNamespaceDeclaration{
+				Prefix: "", NamespaceUri: a.Value,
+			})
+			inScope[""] = a.Value
+			continue
+		}
+
+		attr := &pb.XmlAttribute{
+			NamespaceName:   a.Name.Space,
+			LocalName:       a.Name.Local,
+			NormalizedValue: a.Value,
+			Specified:       true,
+		}
+		// Reserved xml:* attributes get mirrored onto the element's strong fields.
+		if a.Name.Space == "http://www.w3.org/XML/1998/namespace" || (a.Name.Space == "" && strings.HasPrefix(a.Name.Local, "xml:")) {
+			switch strings.TrimPrefix(a.Name.Local, "xml:") {
+			case "lang":
+				el.XmlLang = a.Value
+			case "space":
+				switch a.Value {
+				case "default":
+					el.XmlSpace = pb.XmlSpace_XML_SPACE_DEFAULT
+				case "preserve":
+					el.XmlSpace = pb.XmlSpace_XML_SPACE_PRESERVE
+				}
+			case "base":
+				el.XmlBase = a.Value
+			case "id":
+				el.XmlId = a.Value
+			}
+		}
+		el.Attributes = append(el.Attributes, attr)
+	}
+
+	// Resolve prefix/qualified_name for the element itself
+	if t.Name.Space != "" {
+		for prefix, uri := range inScope {
+			if uri == t.Name.Space {
+				el.Prefix = prefix
+				break
+			}
+		}
+	}
+	if el.Prefix != "" {
+		el.QualifiedName = el.Prefix + ":" + t.Name.Local
+	} else {
+		el.QualifiedName = t.Name.Local
+	}
+	el.InScopeNamespaces = inScope
+
+	return el
+}
+
+func isWhitespace(s string) bool {
+	for _, r := range s {
+		switch r {
+		case ' ', '\t', '\r', '\n':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// cdataRange records byte offsets of "<![CDATA[...]]>" sections in the raw source.
+// start points to '<', end points one past '>' (so [start,end) covers the whole thing).
+// For matching we care about the inner content offsets (after "<![CDATA[" up to "]]>").
+type cdataRange struct{ start, end int }
+
+func scanCDATARanges(src []byte) []cdataRange {
+	var out []cdataRange
+	open := []byte("<![CDATA[")
+	close := []byte("]]>")
+	i := 0
+	for i < len(src) {
+		j := bytes.Index(src[i:], open)
+		if j < 0 {
+			break
+		}
+		innerStart := i + j + len(open)
+		k := bytes.Index(src[innerStart:], close)
+		if k < 0 {
+			break
+		}
+		innerEnd := innerStart + k
+		out = append(out, cdataRange{start: innerStart, end: innerEnd})
+		i = innerEnd + len(close)
+	}
+	return out
+}
+
+// isSelfClosingTag inspects the raw bytes at the element's start tag to decide
+// whether it was written as <foo/> or <foo>...</foo>. We don't have exact
+// offsets, so we scan near where the element would have been opened based on
+// order; as a correctness fallback, we mark self_closing=true when the element
+// has no children and the source contains `<localName .../>` before the
+// next `<`.
+func isSelfClosingTag(src []byte, el *pb.XmlElement) bool {
+	if len(el.Children) != 0 {
+		return false
+	}
+	name := el.LocalName
+	if el.Prefix != "" {
+		name = el.Prefix + ":" + el.LocalName
+	}
+	// The pattern <name( attrs)?\s*/> occurring somewhere in src is a strong
+	// indicator (not perfect in the face of comments containing the same text,
+	// but good enough for codec metadata).
+	pat := regexp.MustCompile(`<` + regexp.QuoteMeta(name) + `(\s[^<>]*)?/>`)
+	return pat.Match(src)
+}
+
+// scanTextPieces walks the raw bytes of a CharData token and splits it into
+// character-data / entity-ref / char-ref pieces as represented in the proto.
+func scanTextPieces(raw []byte) []*pb.XmlTextPiece {
+	s := string(raw)
+	if !strings.ContainsAny(s, "&") {
+		return nil
+	}
+	var out []*pb.XmlTextPiece
+	i := 0
+	for i < len(s) {
+		amp := strings.IndexByte(s[i:], '&')
+		if amp < 0 {
+			out = append(out, &pb.XmlTextPiece{Piece: &pb.XmlTextPiece_CharacterData{CharacterData: s[i:]}})
+			break
+		}
+		if amp > 0 {
+			out = append(out, &pb.XmlTextPiece{Piece: &pb.XmlTextPiece_CharacterData{CharacterData: s[i : i+amp]}})
+		}
+		rest := s[i+amp:]
+		semi := strings.IndexByte(rest, ';')
+		if semi < 0 {
+			out = append(out, &pb.XmlTextPiece{Piece: &pb.XmlTextPiece_CharacterData{CharacterData: rest}})
+			break
+		}
+		ref := rest[1:semi] // without & and ;
+		if strings.HasPrefix(ref, "#") {
+			isHex := strings.HasPrefix(ref, "#x") || strings.HasPrefix(ref, "#X")
+			cp := parseCodepoint(ref[1:])
+			out = append(out, &pb.XmlTextPiece{Piece: &pb.XmlTextPiece_CharRefCodepoint{CharRefCodepoint: cp}})
+			if isHex {
+				out = append(out, &pb.XmlTextPiece{Piece: &pb.XmlTextPiece_CharRefIsHex{CharRefIsHex: true}})
+			}
+		} else {
+			out = append(out, &pb.XmlTextPiece{Piece: &pb.XmlTextPiece_EntityRefName{EntityRefName: ref}})
+		}
+		i = i + amp + semi + 1
+	}
+	return out
+}
+
+func parseCodepoint(s string) uint32 {
+	base := 10
+	if strings.HasPrefix(s, "x") || strings.HasPrefix(s, "X") {
+		base = 16
+		s = s[1:]
+	}
+	var v uint32
+	for _, r := range s {
+		var d uint32
+		switch {
+		case r >= '0' && r <= '9':
+			d = uint32(r - '0')
+		case r >= 'a' && r <= 'f':
+			d = uint32(r-'a') + 10
+		case r >= 'A' && r <= 'F':
+			d = uint32(r-'A') + 10
+		default:
+			return v
+		}
+		v = v*uint32(base) + d
+	}
+	if v > 0x10FFFF || !utf8.ValidRune(rune(v)) {
+		return 0xFFFD
+	}
+	return v
+}
+
+// parseDoctypeDirective extracts the name from a DOCTYPE directive body.
+// The body supplied by encoding/xml excludes the leading "!" — it looks like
+// `DOCTYPE root PUBLIC "id" "id"` or `DOCTYPE root [ ... ]`. We capture the
+// name and external id only; the internal subset is left unparsed (see
+// testing/README.md).
+func parseDoctypeDirective(body string) *pb.XmlDocumentTypeDeclaration {
+	fields := strings.Fields(body)
+	if len(fields) < 2 || !strings.EqualFold(fields[0], "DOCTYPE") {
+		return nil
+	}
+	d := &pb.XmlDocumentTypeDeclaration{Name: fields[1]}
+	if strings.Contains(body, "[") {
+		d.HasInternalSubset = true
+	}
+	// Capture PUBLIC/SYSTEM IDs if present.
+	if idx := strings.Index(body, "PUBLIC"); idx > 0 {
+		ext := &pb.XmlExternalId{}
+		rest := body[idx+len("PUBLIC"):]
+		parts := extractQuoted(rest, 2)
+		if len(parts) >= 1 {
+			ext.PublicId = parts[0]
+		}
+		if len(parts) >= 2 {
+			ext.SystemId = parts[1]
+		}
+		d.ExternalId = ext
+	} else if idx := strings.Index(body, "SYSTEM"); idx > 0 {
+		rest := body[idx+len("SYSTEM"):]
+		parts := extractQuoted(rest, 1)
+		ext := &pb.XmlExternalId{}
+		if len(parts) >= 1 {
+			ext.SystemId = parts[0]
+		}
+		d.ExternalId = ext
+	}
+	return d
+}
+
+func extractQuoted(s string, max int) []string {
+	var out []string
+	for len(s) > 0 && len(out) < max {
+		q := strings.IndexAny(s, `"'`)
+		if q < 0 {
+			break
+		}
+		quote := s[q]
+		end := strings.IndexByte(s[q+1:], quote)
+		if end < 0 {
+			break
+		}
+		out = append(out, s[q+1:q+1+end])
+		s = s[q+1+end+1:]
+	}
+	return out
+}
+
+// applyXMLDeclaration parses the pseudo-attrs of the <?xml ... ?> PI and writes
+// them onto the XmlDocument.
+func applyXMLDeclaration(doc *pb.XmlDocument, inst string) {
+	attrs := parsePseudoAttrs(inst)
+	switch attrs["version"] {
+	case "1.0":
+		doc.XmlVersion = pb.XmlVersion_XML_VERSION_1_0
+	case "1.1":
+		doc.XmlVersion = pb.XmlVersion_XML_VERSION_1_1
+	}
+	if enc, ok := attrs["encoding"]; ok {
+		doc.CharacterEncodingScheme = enc
+	}
+	switch attrs["standalone"] {
+	case "yes":
+		doc.Standalone = pb.XmlStandaloneDeclaration_XML_STANDALONE_YES
+	case "no":
+		doc.Standalone = pb.XmlStandaloneDeclaration_XML_STANDALONE_NO
+	}
+}
+
+var pseudoAttrRE = regexp.MustCompile(`(\w+)\s*=\s*(?:"([^"]*)"|'([^']*)')`)
+
+func parsePseudoAttrs(s string) map[string]string {
+	out := map[string]string{}
+	for _, m := range pseudoAttrRE.FindAllStringSubmatch(s, -1) {
+		v := m[2]
+		if v == "" {
+			v = m[3]
+		}
+		out[m[1]] = v
+	}
+	return out
+}
+
+func detectEncoding(src []byte) *pb.XmlEncodingInfo {
+	info := &pb.XmlEncodingInfo{}
+	switch {
+	case bytes.HasPrefix(src, []byte{0xEF, 0xBB, 0xBF}):
+		info.HasBom = true
+		info.BomType = pb.XmlBomType_XML_BOM_UTF_8
+		info.ActualEncoding = "UTF-8"
+	case bytes.HasPrefix(src, []byte{0xFE, 0xFF}):
+		info.HasBom = true
+		info.BomType = pb.XmlBomType_XML_BOM_UTF_16_BE
+		info.ActualEncoding = "UTF-16BE"
+	case bytes.HasPrefix(src, []byte{0xFF, 0xFE}):
+		info.HasBom = true
+		info.BomType = pb.XmlBomType_XML_BOM_UTF_16_LE
+		info.ActualEncoding = "UTF-16LE"
+	default:
+		info.ActualEncoding = "UTF-8"
+	}
+	// Scan the XML declaration for a declared encoding.
+	if idx := bytes.Index(src, []byte("<?xml")); idx >= 0 {
+		end := bytes.Index(src[idx:], []byte("?>"))
+		if end > 0 {
+			attrs := parsePseudoAttrs(string(src[idx : idx+end]))
+			if enc, ok := attrs["encoding"]; ok {
+				info.DeclaredEncoding = enc
+			}
+		}
+	}
+	return info
+}

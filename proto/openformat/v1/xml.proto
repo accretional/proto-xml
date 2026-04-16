@@ -1,0 +1,642 @@
+// XmlDocument: Protocol Buffer Representation of the XML File Format
+//
+// Adapted from the standalone XML spec proto to fit within the openformat.v1
+// package.  All message and enum names are prefixed with "Xml" to avoid
+// collisions with the html.proto types that share this package.
+//
+// This schema models the XML 1.0 (Fifth Edition) and XML 1.1 (Second Edition)
+// specifications as defined by the W3C, along with:
+//   - Namespaces in XML 1.0 (Third Edition) / 1.1 (Second Edition)
+//   - XML Base (Second Edition)
+//   - xml:id (W3C Recommendation)
+//   - XML Information Set (Second Edition)
+//   - XML Schema Part 2: Datatypes (for typed value annotations)
+//   - XML Canonicalization (C14N 1.0 / 1.1)
+//   - XInclude 1.0 / 1.1
+//   - xml:space and xml:lang reserved attributes
+//   - DOCTYPE / DTD internal subset structures
+//   - Processing Instructions and Comments as first-class nodes
+//   - CDATA sections, entity references, character references
+//   - Document Type Definitions (external/internal subsets, notations, entities)
+
+syntax = "proto3";
+
+package openformat.v1;
+
+option go_package = "openformat/gen/go/openformat/v1;openformatv1";
+
+import "openformat/v1/mime.proto";
+
+// ============================================================
+//  TOP-LEVEL DOCUMENT
+// ============================================================
+
+// XmlDocument represents a complete XML document per [XML 1.0 §2.1].
+message XmlDocument {
+  XmlVersion xml_version = 1;
+  string character_encoding_scheme = 2;
+  XmlStandaloneDeclaration standalone = 3;
+  XmlDocumentTypeDeclaration doctype = 4;
+  XmlElement document_element = 5;
+  repeated XmlMiscNode prolog_misc = 6;
+  repeated XmlMiscNode epilog_misc = 7;
+  repeated XmlNotationDeclaration notations = 8;
+  repeated XmlUnparsedEntityDeclaration unparsed_entities = 9;
+  string base_uri = 10;
+  bool well_formed = 11;
+  XmlSourceLocation source_location = 12;
+}
+
+// XML version per [XML 1.0 §2.8] / [XML 1.1 §2.8]
+enum XmlVersion {
+  XML_VERSION_UNSPECIFIED = 0;
+  XML_VERSION_1_0 = 1;
+  XML_VERSION_1_1 = 2;
+}
+
+// standalone declaration [XML 1.0 §2.9]
+enum XmlStandaloneDeclaration {
+  XML_STANDALONE_UNSPECIFIED = 0;
+  XML_STANDALONE_YES = 1;
+  XML_STANDALONE_NO = 2;
+}
+
+// ============================================================
+//  DOCUMENT TYPE DECLARATION
+// ============================================================
+
+message XmlDocumentTypeDeclaration {
+  string name = 1;
+  XmlExternalId external_id = 2;
+  repeated XmlInternalSubsetDeclaration internal_subset = 3;
+  bool has_internal_subset = 4;
+}
+
+message XmlExternalId {
+  string system_id = 1;
+  string public_id = 2;
+}
+
+message XmlInternalSubsetDeclaration {
+  oneof declaration {
+    XmlElementDeclaration element_decl = 1;
+    XmlAttributeListDeclaration attlist_decl = 2;
+    XmlEntityDeclaration entity_decl = 3;
+    XmlNotationDeclaration notation_decl = 4;
+    XmlProcessingInstruction processing_instruction = 5;
+    XmlComment comment = 6;
+    XmlConditionalSection conditional_section = 7;
+    XmlParameterEntityReference pe_reference = 8;
+  }
+}
+
+// ============================================================
+//  ELEMENT DECLARATION  [XML 1.0 §3.2]
+// ============================================================
+
+message XmlElementDeclaration {
+  string name = 1;
+  XmlContentSpec content_spec = 2;
+}
+
+message XmlContentSpec {
+  oneof content {
+    XmlEmptyContent empty = 1;
+    XmlAnyContent any = 2;
+    XmlMixedContent mixed = 3;
+    XmlChildrenContent children = 4;
+  }
+}
+
+message XmlEmptyContent {}
+message XmlAnyContent {}
+
+message XmlMixedContent {
+  repeated string element_names = 1;
+}
+
+message XmlChildrenContent {
+  XmlContentParticle particle = 1;
+}
+
+message XmlContentParticle {
+  oneof particle {
+    string element_name = 1;
+    XmlChoiceGroup choice = 2;
+    XmlSequenceGroup seq = 3;
+  }
+  XmlOccurrence occurrence = 4;
+}
+
+message XmlChoiceGroup {
+  repeated XmlContentParticle particles = 1;
+}
+
+message XmlSequenceGroup {
+  repeated XmlContentParticle particles = 1;
+}
+
+enum XmlOccurrence {
+  XML_OCCURRENCE_ONCE = 0;
+  XML_OCCURRENCE_OPTIONAL = 1;
+  XML_OCCURRENCE_ZERO_OR_MORE = 2;
+  XML_OCCURRENCE_ONE_OR_MORE = 3;
+}
+
+// ============================================================
+//  ATTRIBUTE LIST DECLARATION  [XML 1.0 §3.3]
+// ============================================================
+
+message XmlAttributeListDeclaration {
+  string element_name = 1;
+  repeated XmlAttributeDefinition att_defs = 2;
+}
+
+message XmlAttributeDefinition {
+  string name = 1;
+  XmlAttributeType att_type = 2;
+  XmlAttributeDefault default_decl = 3;
+}
+
+message XmlAttributeType {
+  oneof att_type {
+    XmlStringAttributeType string_type = 1;
+    XmlTokenizedAttributeType tokenized_type = 2;
+    XmlEnumeratedAttributeType enumerated_type = 3;
+    XmlNotationAttributeType notation_type = 4;
+  }
+}
+
+message XmlStringAttributeType {}
+
+enum XmlTokenizedAttributeType {
+  XML_TOKENIZED_ID = 0;
+  XML_TOKENIZED_IDREF = 1;
+  XML_TOKENIZED_IDREFS = 2;
+  XML_TOKENIZED_ENTITY = 3;
+  XML_TOKENIZED_ENTITIES = 4;
+  XML_TOKENIZED_NMTOKEN = 5;
+  XML_TOKENIZED_NMTOKENS = 6;
+}
+
+message XmlEnumeratedAttributeType {
+  repeated string nmtokens = 1;
+}
+
+message XmlNotationAttributeType {
+  repeated string notation_names = 1;
+}
+
+message XmlAttributeDefault {
+  oneof default_kind {
+    XmlRequiredDefault required = 1;
+    XmlImpliedDefault implied = 2;
+    XmlFixedDefault fixed = 3;
+    XmlDefaultValue default_value = 4;
+  }
+}
+
+message XmlRequiredDefault {}
+message XmlImpliedDefault {}
+message XmlFixedDefault   { string value = 1; }
+message XmlDefaultValue   { string value = 1; }
+
+// ============================================================
+//  ENTITY DECLARATIONS  [XML 1.0 §4.2]
+// ============================================================
+
+message XmlEntityDeclaration {
+  bool is_parameter_entity = 1;
+  string name = 2;
+  oneof entity_def {
+    XmlInternalEntityDef internal_def = 3;
+    XmlExternalEntityDef external_def = 4;
+  }
+}
+
+message XmlInternalEntityDef {
+  string replacement_text = 1;
+}
+
+message XmlExternalEntityDef {
+  XmlExternalId external_id = 1;
+  string ndata_name = 2;
+}
+
+message XmlUnparsedEntityDeclaration {
+  string name = 1;
+  string system_id = 2;
+  string public_id = 3;
+  string declaration_base_uri = 4;
+  string notation_name = 5;
+}
+
+// ============================================================
+//  NOTATION DECLARATIONS  [XML 1.0 §4.7]
+// ============================================================
+
+message XmlNotationDeclaration {
+  string name = 1;
+  XmlExternalId external_id = 2;
+}
+
+// ============================================================
+//  CONDITIONAL SECTIONS  [XML 1.0 §3.4]
+// ============================================================
+
+message XmlConditionalSection {
+  oneof section {
+    XmlIncludeSection include_sect = 1;
+    XmlIgnoreSection ignore_sect = 2;
+  }
+}
+
+message XmlIncludeSection {
+  repeated XmlInternalSubsetDeclaration declarations = 1;
+}
+
+message XmlIgnoreSection {
+  string raw_content = 1;
+}
+
+// ============================================================
+//  PARAMETER ENTITY REFERENCE  [XML 1.0 §4.4.8]
+// ============================================================
+
+message XmlParameterEntityReference {
+  string name = 1;
+}
+
+// ============================================================
+//  NODES: THE XML INFORMATION SET
+// ============================================================
+
+message XmlNode {
+  oneof node {
+    XmlElement element = 1;
+    XmlText text = 2;
+    XmlCdataSection cdata_section = 3;
+    XmlProcessingInstruction processing_instruction = 4;
+    XmlComment comment = 5;
+    XmlEntityReference entity_reference = 6;
+    XmlCharacterReference character_reference = 7;
+  }
+}
+
+// ============================================================
+//  ELEMENT  [XML 1.0 §3, Infoset §2.2]
+// ============================================================
+
+message XmlElement {
+  string namespace_name = 1;
+  string local_name = 2;
+  string prefix = 3;
+  string qualified_name = 4;
+  repeated XmlAttribute attributes = 5;
+  repeated XmlNamespaceDeclaration namespace_declarations = 6;
+  map<string, string> in_scope_namespaces = 7;
+  repeated XmlNode children = 8;
+  string xml_base = 9;
+  string xml_lang = 10;
+  XmlSpace xml_space = 11;
+  string xml_id = 12;
+  bool self_closing = 13;
+  XmlSourceLocation source_location = 14;
+}
+
+enum XmlSpace {
+  XML_SPACE_UNSPECIFIED = 0;
+  XML_SPACE_DEFAULT = 1;
+  XML_SPACE_PRESERVE = 2;
+}
+
+// ============================================================
+//  ATTRIBUTE  [XML 1.0 §3.1, Infoset §2.3]
+// ============================================================
+
+message XmlAttribute {
+  string namespace_name = 1;
+  string local_name = 2;
+  string prefix = 3;
+  string qualified_name = 4;
+  string normalized_value = 5;
+  XmlAttributeValueLiteral literal_value = 6;
+  bool specified = 7;
+  XmlDeclaredAttributeType attribute_type = 8;
+  string id_value = 9;
+  repeated string id_refs = 10;
+  repeated string entity_refs = 11;
+}
+
+message XmlAttributeValueLiteral {
+  XmlQuoteChar quote_char = 1;
+  repeated XmlAttributeValuePiece pieces = 2;
+}
+
+enum XmlQuoteChar {
+  XML_QUOTE_DOUBLE = 0;
+  XML_QUOTE_SINGLE = 1;
+}
+
+message XmlAttributeValuePiece {
+  oneof piece {
+    string character_data = 1;
+    string entity_ref_name = 2;
+    uint32 char_ref_codepoint = 3;
+    bool char_ref_is_hex = 4;
+  }
+}
+
+enum XmlDeclaredAttributeType {
+  XML_ATTR_TYPE_UNDECLARED = 0;
+  XML_ATTR_TYPE_CDATA = 1;
+  XML_ATTR_TYPE_ID = 2;
+  XML_ATTR_TYPE_IDREF = 3;
+  XML_ATTR_TYPE_IDREFS = 4;
+  XML_ATTR_TYPE_ENTITY = 5;
+  XML_ATTR_TYPE_ENTITIES = 6;
+  XML_ATTR_TYPE_NMTOKEN = 7;
+  XML_ATTR_TYPE_NMTOKENS = 8;
+  XML_ATTR_TYPE_NOTATION = 9;
+  XML_ATTR_TYPE_ENUMERATION = 10;
+}
+
+// ============================================================
+//  NAMESPACE DECLARATION  [Namespaces in XML §3]
+// ============================================================
+
+message XmlNamespaceDeclaration {
+  string prefix = 1;
+  string namespace_uri = 2;
+}
+
+// ============================================================
+//  TEXT  [XML 1.0 §2.4, Infoset §2.6]
+// ============================================================
+
+message XmlText {
+  string data = 1;
+  bool element_content_whitespace = 2;
+  repeated XmlTextPiece raw_pieces = 3;
+}
+
+message XmlTextPiece {
+  oneof piece {
+    string character_data = 1;
+    string entity_ref_name = 2;
+    uint32 char_ref_codepoint = 3;
+    bool char_ref_is_hex = 4;
+  }
+}
+
+// ============================================================
+//  CDATA SECTION  [XML 1.0 §2.7, Infoset §2.7]
+// ============================================================
+
+message XmlCdataSection {
+  string data = 1;
+}
+
+// ============================================================
+//  PROCESSING INSTRUCTION  [XML 1.0 §2.6, Infoset §2.8]
+// ============================================================
+
+message XmlProcessingInstruction {
+  string target = 1;
+  string data = 2;
+  string base_uri = 3;
+  string notation_name = 4;
+}
+
+// ============================================================
+//  COMMENT  [XML 1.0 §2.5, Infoset §2.9]
+// ============================================================
+
+message XmlComment {
+  string content = 1;
+}
+
+// ============================================================
+//  ENTITY REFERENCE  [XML 1.0 §4.1, Infoset §2.10]
+// ============================================================
+
+message XmlEntityReference {
+  string name = 1;
+  string system_id = 2;
+  string public_id = 3;
+  string declaration_base_uri = 4;
+  repeated XmlNode children = 5;
+}
+
+// ============================================================
+//  CHARACTER REFERENCE  [XML 1.0 §4.1]
+// ============================================================
+
+message XmlCharacterReference {
+  uint32 codepoint = 1;
+  bool is_hex = 2;
+}
+
+// ============================================================
+//  MISC NODE  (prolog / epilog)
+// ============================================================
+
+message XmlMiscNode {
+  oneof node {
+    XmlProcessingInstruction processing_instruction = 1;
+    XmlComment comment = 2;
+  }
+}
+
+// ============================================================
+//  XINCLUDE  [XInclude 1.0 §4]
+// ============================================================
+
+message XIncludeDirective {
+  oneof directive {
+    XIncludeInclude include = 1;
+    XIncludeFallback fallback = 2;
+  }
+}
+
+message XIncludeInclude {
+  string href = 1;
+  XIncludeParseType parse = 2;
+  string xpointer = 3;
+  string encoding = 4;
+  string accept = 5;
+  string accept_language = 6;
+  XIncludeFallback fallback = 7;
+  repeated XmlNode included_nodes = 8;
+  string included_text = 9;
+}
+
+enum XIncludeParseType {
+  XINCLUDE_PARSE_XML = 0;
+  XINCLUDE_PARSE_TEXT = 1;
+}
+
+message XIncludeFallback {
+  repeated XmlNode children = 1;
+}
+
+// ============================================================
+//  XML SCHEMA DATATYPES  [XSD Part 2]
+// ============================================================
+
+message XmlTypedValue {
+  string type_name = 1;
+  string type_namespace = 2;
+  string lexical_value = 3;
+  XmlSchemaValidity validity = 4;
+  bool inferred = 5;
+}
+
+enum XmlSchemaValidity {
+  XML_SCHEMA_VALIDITY_UNKNOWN = 0;
+  XML_SCHEMA_VALIDITY_VALID = 1;
+  XML_SCHEMA_VALIDITY_INVALID = 2;
+  XML_SCHEMA_VALIDITY_NOTKNOWN = 3;
+}
+
+// ============================================================
+//  CANONICAL XML  [C14N 1.0, C14N 1.1]
+// ============================================================
+
+message XmlCanonicalizationConfig {
+  XmlCanonicalizationMethod method = 1;
+  repeated string inclusive_ns_prefixes = 2;
+  bool with_comments = 3;
+}
+
+enum XmlCanonicalizationMethod {
+  XML_C14N_METHOD_NONE = 0;
+  XML_C14N_1_0 = 1;
+  XML_C14N_1_0_WITH_COMMENTS = 2;
+  XML_C14N_1_1 = 3;
+  XML_C14N_1_1_WITH_COMMENTS = 4;
+  XML_EXCLUSIVE_C14N_1_0 = 5;
+  XML_EXCLUSIVE_C14N_1_0_WITH_COMMENTS = 6;
+}
+
+// ============================================================
+//  XML BASE  [XML Base §3]
+// ============================================================
+
+message XmlBaseUri {
+  string declared_value = 1;
+  string resolved_value = 2;
+}
+
+// ============================================================
+//  XML:LANG  [XML 1.0 §2.12 / BCP 47]
+// ============================================================
+
+message XmlLanguageId {
+  string raw_value = 1;
+  string primary_language = 2;
+  repeated string extended_language = 3;
+  string script = 4;
+  string region = 5;
+  repeated string variants = 6;
+  repeated string extensions = 7;
+  string private_use = 8;
+}
+
+// ============================================================
+//  CHARACTER ENCODING  [XML 1.0 §4.3.3]
+// ============================================================
+
+message XmlEncodingInfo {
+  string declared_encoding = 1;
+  string actual_encoding = 2;
+  bool has_bom = 3;
+  XmlBomType bom_type = 4;
+}
+
+enum XmlBomType {
+  XML_BOM_NONE = 0;
+  XML_BOM_UTF_8 = 1;
+  XML_BOM_UTF_16_LE = 2;
+  XML_BOM_UTF_16_BE = 3;
+  XML_BOM_UTF_32_LE = 4;
+  XML_BOM_UTF_32_BE = 5;
+}
+
+// ============================================================
+//  WELL-FORMEDNESS & VALIDITY ANNOTATIONS
+// ============================================================
+
+message XmlWellFormednessError {
+  string constraint_id = 1;
+  string description = 2;
+  XmlSourceLocation location = 3;
+  XmlWfcCategory category = 4;
+}
+
+enum XmlWfcCategory {
+  XML_WFC_GENERAL = 0;
+  XML_WFC_NAME_CHARS = 1;
+  XML_WFC_ENTITY_DECLARED = 2;
+  XML_WFC_NO_RECURSION = 3;
+  XML_WFC_IN_DTD = 4;
+  XML_WFC_PARSED_ENTITY = 5;
+  XML_WFC_NO_EXTERNAL_ENTITY_REFS = 6;
+  XML_WFC_LEGAL_CHAR = 7;
+}
+
+message XmlValidityError {
+  string constraint_id = 1;
+  string description = 2;
+  XmlSourceLocation location = 3;
+}
+
+// ============================================================
+//  SOURCE LOCATION
+// ============================================================
+
+message XmlSourceLocation {
+  uint32 line = 1;
+  uint32 column = 2;
+  uint64 byte_offset = 3;
+  uint64 byte_length = 4;
+}
+
+// ============================================================
+//  PSVI (POST-SCHEMA-VALIDATION INFOSET) ANNOTATIONS
+// ============================================================
+
+message XmlPsviElementAnnotation {
+  XmlTypedValue type_definition = 1;
+  XmlSchemaValidity validity = 2;
+  bool nil = 3;
+  string schema_default = 4;
+  bool schema_specified = 5;
+}
+
+message XmlPsviAttributeAnnotation {
+  XmlTypedValue type_definition = 1;
+  XmlSchemaValidity validity = 2;
+  string schema_default = 3;
+  bool schema_specified = 4;
+}
+
+// ============================================================
+//  EXTENDED DOCUMENT WRAPPER
+// ============================================================
+
+// XmlDocumentWithMetadata is the primary transport type for XML documents
+// in the OpenFormat service.  raw_bytes carries the verbatim source bytes for
+// round-trip Encode calls, mirroring PdfDocument.raw_bytes.
+message XmlDocumentWithMetadata {
+  XmlDocument document = 1;
+  XmlEncodingInfo encoding_info = 2;
+  XmlCanonicalizationConfig c14n_config = 3;
+  repeated XmlWellFormednessError wf_errors = 4;
+  repeated XmlValidityError validity_errors = 5;
+  map<string, XmlPsviElementAnnotation> element_psvi = 6;
+  map<string, XmlPsviAttributeAnnotation> attribute_psvi = 7;
+  repeated XIncludeDirective xinclude_directives = 8;
+  // Raw source bytes — always set by Decode; required by Encode for round-trip.
+  bytes raw_bytes = 100;
+}
